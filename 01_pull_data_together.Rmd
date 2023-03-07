@@ -1,0 +1,154 @@
+---
+title: "pull data together"
+author: "David Hughes"
+date: "2/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## pulling the FGFP microbiome, metabolome, and clinical trait data together
+
+### Related Study: FGFP mt -> metabolite association analysis for a breast cancer study
+
+### For: Kaitlin Wade, Tim Robinson, and Grace Edmunds
+
+# Read in paramater file
+
+```{r}
+library(tidyverse)
+source("parameters/pfile.sh")
+```
+
+# Read in the data
+
+```{r}
+#############################
+## 1) linker file
+#############################
+linker = read.table(linker_file, header = TRUE, as.is = TRUE, sep = "\t")
+
+#############################
+## 2) primary clinical file
+#############################
+clinical_data = read.table(clinical_trait_file, header = TRUE, as.is = TRUE, sep = "\t")
+
+
+#############################
+## 6) metabolite data
+#############################
+metabolite_data = read.table(metabolite_data_file, header = TRUE, as.is = TRUE, sep = "\t")
+met_feature_data = read.table(metabolite_feature_file, header = TRUE, as.is = TRUE, sep = "\t")
+met_sample_data = read.table(metabolite_sample_file, header = TRUE, as.is = TRUE, sep = "\t")
+################
+## add VDP ids
+################
+m = match( rownames(metabolite_data), linker$VERC_id )
+## how many metabolite samples do I not have a VDP ID for??
+sum(is.na(m)) ## 58
+## remove those with NO match
+w = which(is.na(m))
+metabolite_data = metabolite_data[-w,]
+met_sample_data = met_sample_data[-w,]
+## perform match again
+m = match( rownames(metabolite_data), linker$VERC_id )
+rownames(metabolite_data) = linker$fgfp_id[m]
+
+#############################
+## 7) microbiome data
+#############################
+mt_data = read.table(microbial_trait_file, header = TRUE, as.is = TRUE, sep = "\t")
+mt_batch_data = read.table(microbial_lab_batch_file, header = TRUE, as.is = TRUE, sep = "\t")
+mt_phylogenetic_data = read.table(microbial_phylogenetics_file, header = TRUE, as.is = TRUE, sep = "\t")
+## edit identifier
+mt_batch_data$SAMPLE_NAME = gsub("VDP.","VDP.0", mt_batch_data$SAMPLE_NAME)
+
+```
+
+# Vector of all unique VDP IDs
+
+```{r}
+## make a vector of all the sample VDP IDs
+vdp_ids = sort( unique( c( 
+                   rownames(mt_data), 
+                   mt_batch_data$SAMPLE_NAME, ## microbial traits
+                   rownames(metabolite_data), ## metabolite
+                   rownames(clinical_data), ##  clinical  data
+                   linker$fgfp_id ## linker file
+                   ) ) )
+
+vdp_ids = as.character(vdp_ids)
+length( vdp_ids ) ## 3133
+```
+
+# generate uniform sample ID data frames
+
+## metabolite data
+
+```{r}
+#####################
+## Metabolite data
+#####################
+m = match(vdp_ids, rownames(metabolite_data) )
+metabolite_data = metabolite_data[m, ]
+rownames(metabolite_data) = vdp_ids
+
+```
+
+## microbiome data
+
+```{r}
+m = match(vdp_ids, rownames(mt_data) )
+mt_data = mt_data[m, ]
+rownames(mt_data) = vdp_ids
+
+## batch data
+rownames(mt_batch_data) = mt_batch_data$SAMPLE_NAME
+mt_batch_data = mt_batch_data[, -1]
+m = match(vdp_ids, rownames(mt_batch_data ) )
+mt_batch_data = mt_batch_data[m, ]
+rownames(mt_batch_data) = vdp_ids
+
+## redefine MT data
+mt_data = cbind( mt_batch_data , mt_data)
+```
+
+
+## clincal data
+
+```{r}
+#####################
+## Clinical data
+#####################
+m = match(vdp_ids, rownames(clinical_data) )
+clinical_data = clinical_data[m, ]
+rownames(clinical_data) = vdp_ids
+
+```
+
+
+# Write data to file
+
+```{r}
+### Clinical Data
+f = paste0(data_dir, "clinical_data.txt")
+write.table(clinical_data, file = f, row.names = TRUE, col.names = TRUE, sep = "\t", quote = FALSE)
+
+### Microbiome Data
+f = paste0(data_dir, "microbiome_data.txt")
+write.table(mt_data, file = f, row.names = TRUE, col.names = TRUE, sep = "\t", quote = FALSE)
+
+f = paste0(data_dir, "microbiome_phylogeny.txt")
+write.table(mt_phylogenetic_data, file = f, row.names = FALSE, col.names = TRUE, sep = "\t", quote = FALSE)
+
+### Metabolite Data
+f = paste0(data_dir, "metabolite_data.txt")
+write.table(metabolite_data, file = f, row.names = TRUE, col.names = TRUE, sep = "\t", quote = FALSE)
+
+f = paste0(data_dir, "metabolite_feature_data.txt")
+write.table(met_feature_data, file = f, row.names = TRUE, col.names = TRUE, sep = "\t", quote = FALSE)
+
+```
+

@@ -1,0 +1,198 @@
+---
+title: "Extract Study Variables"
+author: "David Hughes"
+date: "2/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+source("parameters/pfile.sh")
+```
+
+```{r}
+files = list.files(data_dir)
+mydata = lapply(files[c(1:2,4)], function(file){
+  read.table(paste0(data_dir,file), header = TRUE, sep = "\t", as.is = TRUE)
+})
+names(mydata) = gsub(".txt","", files[c(1,2,4)])
+names(mydata)
+```
+## make a drinker binary
+
+```{r}
+mydata$clinical_data$drinker = mydata$clinical_data$alcohol_average_consumption_last_week
+mydata$clinical_data$drinker = ifelse(mydata$clinical_data$drinker == "Not applicable", 0 , 1 )
+table(mydata$clinical_data$drinker)
+##
+w = which( mydata$clinical_data$alcohol_average_consumption_last_week == "Not applicable")
+mydata$clinical_data$alcohol_average_consumption_last_week[w] = 0
+mydata$clinical_data$alcohol_average_consumption_last_week = as.numeric(as.character(mydata$clinical_data$alcohol_average_consumption_last_week))
+table(mydata$clinical_data$alcohol_average_consumption_last_week)
+```
+
+
+```{r}
+v2keep = c("age","sex","BMI", 
+           "smoking_never_ever_current", 
+           "smoking_average_items_consumed_per_day_last3months",
+           "drinker",
+           "alcohol_average_consumption_last_week",
+           "house_hold_monthl_net_income",
+           "is_vegetarian", 
+           "meat_consumption_frequency_last_week", "meat_average_consumption_last_week" )
+  
+my_covariable_data = mydata$clinical_data[, c(v2keep) ]
+
+colnames(my_covariable_data) = c("age","sex","bmi",
+                                 "smoker_NEC",
+                                 "smoking_3month_avg",
+                                 "drinker",
+                                 "drinking_week_avg",
+                                 "monthly_hh_income",
+                                 "is_vegetarian", 
+                                 "meat_frequency", "meat_consumption" )
+```
+
+
+## Write covariable data to file 
+
+```{r}
+f = paste0(data_dir, "my_covariable_data.txt")
+write.table(my_covariable_data, file = f, row.names = TRUE,col.names = TRUE, sep = "\t", quote = FALSE)
+```
+
+
+## Evaluation of vegetarians and meat eating data
+
+```{r}
+w = grep("meat", colnames(mydata$clinical_data))
+colnames(mydata$clinical_data)[w]
+
+```
+
+
+```{r}
+       
+table( mydata$clinical_data$meat_average_consumption_last_week, 
+       mydata$clinical_data$is_vegetarian )
+```
+
+```{r}
+table( mydata$clinical_data$meat_consumption_frequency_last_week )
+```
+
+
+```{r}
+table( mydata$clinical_data$meat_consumption_frequency_last_week,
+       mydata$clinical_data$is_vegetarian )
+
+```
+## Microbiome data
+
+## Identify taxa to carry forward
+
+```{r}
+gwas_traits = read.table(gwas_mt_file, sep = "\t", header = TRUE, as.is = TRUE)
+gwas_traits = colnames(gwas_traits)
+hb = gwas_traits[grep("HB", gwas_traits)]
+hb = gsub("_HB", "", hb)
+ab = gwas_traits[grep("RNT", gwas_traits)]
+ab = ab[-grep("Div", ab)]
+ab = gsub("_RNTRes", "", ab)
+###
+taxa_2keep = unique( c(ab , hb) )
+```
+
+## Define Microbiome data
+
+```{r}
+mt_data = mydata$microbiome_data[, taxa_2keep ]
+```
+
+## Identify Hurdle taxa
+
+```{r}
+#########################
+## Identify the hurdle taxa
+#########################
+perzero = apply(mt_data, 2, function(x){
+	x = na.omit( as.numeric(x) )
+	pz = sum( x == 0 ) / length( x )
+	})
+w = which(perzero > 0.05)
+GWASHURDLEtaxa = names(w)
+
+## confirm
+sum( GWASHURDLEtaxa %in% hb ) / length(hb)
+
+```
+## Perform HB Step
+
+### Produce (1) AB: abundance traits, truncAB: truncated AB, and present|absence PA traits
+
+```{r}
+
+#########################
+## Transform into:
+## (1) Abundance Traits (AB)
+## (2) Hurdle Binary Triats
+##    (2a) presence|absence (PA)
+##    (2b) zero truncated abundance (truncAB)
+#########################
+gwastaxadata_transformed = c()
+for(i in 1:ncol(mt_data)){
+  ## taxa name
+  n = colnames(mt_data)[i]
+  ## abundance data
+  x = mt_data[,i]
+  original = x
+  ### is it a hurdle taxa ??
+  h = sum(n %in% GWASHURDLEtaxa)
+  if(h == 1){
+    ## set hb data
+    hb = x
+    hb[hb > 0] = 1
+    ## truncated abundance
+    x[x == 0] = NA
+    ## Rank Normal transform
+    # rnt = rntransform(x, split_ties = FALSE)
+    ## data out
+    # out = cbind(original, rnt,  hb)
+    # colnames(out) = paste0( n, c("" ,"_AB", "_PA" ) )
+    out = cbind(original, x,  hb)
+    colnames(out) = paste0( n, c("_AB", "_truncAB", "_PA" ) )
+  } else {
+      ## Rank Normal transform
+      # rnt = rntransform(x, split_ties = FALSE)
+      # out = cbind(original, rnt)
+      out = cbind(original, original)
+      colnames(out) = paste0( n, c("_temp" ,"_AB" ) )
+  }
+  gwastaxadata_transformed = cbind(gwastaxadata_transformed, out)
+}
+
+## remove the uncessary temps
+w = grep("_temp", colnames(gwastaxadata_transformed))
+gwastaxadata_transformed = gwastaxadata_transformed[, -w]
+
+```
+
+## Redefine the mt_data data.frame
+
+```{r}
+mt_data = cbind( mydata$microbiome_data[, 1:15], gwastaxadata_transformed)
+dim(mt_data)
+```
+
+## Write MT data to file 
+
+```{r}
+f = paste0(data_dir, "my_microbial_traits_data.txt")
+write.table(mt_data, file = f, row.names = TRUE,col.names = TRUE, sep = "\t", quote = FALSE)
+```
+

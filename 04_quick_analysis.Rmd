@@ -1,0 +1,226 @@
+---
+title: "Association analysis"
+author: "David Hughes"
+date: "2/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+```{r}
+source("parameters/pfile.sh")
+```
+
+## Read in results 
+
+```{r}
+# f = paste0(results_dir, "Association_SumStats_v0.1.txt")
+f = paste0(results_dir, "Association_SumStats_v0.2.txt")
+mydata = read.table(f, header = TRUE, sep = "\t", quote = "", as.is = TRUE)
+  
+```
+
+
+## How many associations are there
+
+```{r}
+cat(paste0( "P < 0.05\n") )
+sum( mydata$P < 0.05 )
+cat(paste0( "\nP < 0.05/",nrow(mydata),"\n") )
+sum( mydata$P < 0.05/nrow(mydata) )
+```
+
+
+## What are the top associations?
+
+```{r, fig.width = 10, fig.height = 5}
+o = order(mydata$P, decreasing = FALSE)
+
+## unique ids
+uIDs = unique( mydata[o[1:100], 2] )
+
+#### top of table
+mydata[o[1:20], c(1:3,6:9, 23, 33,36:37)] %>% knitr::kable() %>% kableExtra::kable_classic()
+
+```
+
+## make a matrix of the Pvalues
+
+```{r}
+Pmat = xtabs( P ~ exposure + outcome, data = mydata)
+## transform into -log10 values
+Pmat = -log10(Pmat)
+```
+
+## make a heatmap
+
+```{r, fig.width = 20, fig.height = 10}
+## order exposure by sum(-log10(P))
+ex_order = names(sort( apply(Pmat, 1, sum) , decreasing = TRUE))
+# mydata$exposure = factor(mydata$exposure, levels = ex_order)
+mydata$exposure = factor(mydata$exposure, levels = unique( mydata$exposure ))
+
+## order outcome by sum(-log10(P))
+out_order = names(sort( apply(Pmat, 2, sum) , decreasing = TRUE))
+# mydata$outcome = factor(mydata$outcome, levels = out_order)
+mydata$outcome = factor(mydata$outcome, levels = unique( mydata$outcome ))
+
+## Keep just those outcomes and traits with a significant P
+temp = mydata %>% filter(P < 0.05/nrow(mydata) )
+out2keep = unique(temp$outcome)
+exp2keep = unique(temp$exposure)
+plot_data = mydata %>% filter( outcome %in% out2keep | exposure %in% exp2keep  )
+## make those P values that are not significant NAs
+w = which( plot_data$P > 0.05/nrow(mydata) )
+plot_data$P[w] = NA
+  
+# Darjeeling1, Zissou1
+pal <- wesanderson::wes_palette("Zissou1", 100, type = "continuous")
+
+### MAKE THE PLOT
+p = mydata %>% filter(P < 0.05/nrow(mydata) ) %>% ggplot( aes(x = outcome, y = exposure)) +
+# p = plot_data %>% ggplot( aes(x = outcome, y = exposure)) + 
+  geom_tile( aes(fill = -log10(P) ), linejoin = "mitre" ) +
+  #scale_fill_gradient2( low="white", high="blue" ) +
+  #viridis::scale_fill_viridis(discrete=FALSE, direction = 1) +
+  #scale_fill_distiller(palette = "YlGnBu", direction = -1, na.value = "white") +
+  scale_fill_distiller(palette = "Spectral", direction = -1, na.value = "white") +
+  #scale_fill_gradientn(colours = pal) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(axis.text=element_text(size=4) )
+
+p
+
+```
+
+```{r}
+f = paste0(results_dir, "log10_P_tileplot_v0.2.pdf")
+pdf(f, width = 12, height = 8)
+p
+dev.off()
+```
+
+
+```{r}
+But = mydata %>% filter(exposure == "G_Butyricicoccus_AB" & P < 0.05) %>% 
+  arrange(P) 
+
+f = paste0(results_dir, "G_Butyricicoccus_AB.txt")
+write.table(But, file = f, row.names = FALSE, col.names = TRUE, quote = TRUE, sep = "\t")
+
+But %>%
+  knitr::kable() %>%
+  kableExtra::kable_classic()
+```
+
+
+
+
+```{r}
+Firm = mydata %>% filter(exposure == "G_unclassified_P_Firmicutes_AB" & P < 0.05) %>% 
+  arrange(P) 
+
+f = paste0(results_dir, "G_unclassified_P_Firmicutes_AB.txt")
+write.table(Firm, file = f, row.names = FALSE, col.names = TRUE, quote = TRUE, sep = "\t")
+
+Firm %>%
+  knitr::kable() %>%
+  kableExtra::kable_classic()
+
+```
+
+
+
+```{r}
+## Div_Shannon
+## G_Barnesiella_AB
+## G_Sporobacter_AB
+## MDS1
+D = mydata %>% filter(exposure == "Div_NumberGenera" & P < 0.05) %>% 
+  arrange(P) 
+
+#f = paste0(results_dir, "G_unclassified_P_Firmicutes_AB.txt")
+#write.table(D, file = f, row.names = FALSE, col.names = TRUE, quote = TRUE, sep = "\t")
+
+D %>%
+  knitr::kable() %>%
+  kableExtra::kable_classic()
+
+```
+
+
+
+```{r}
+## Div_Shannon
+## G_Barnesiella_AB
+## G_Sporobacter_AB
+## MDS1
+D = mydata %>% filter(exposure == "MDS1" & P < 0.05) %>% 
+  arrange(P) 
+
+#f = paste0(results_dir, "G_unclassified_P_Firmicutes_AB.txt")
+#write.table(D, file = f, row.names = FALSE, col.names = TRUE, quote = TRUE, sep = "\t")
+
+D %>%
+  knitr::kable() %>%
+  kableExtra::kable_classic()
+
+```
+
+
+
+```{r}
+## Div_Shannon
+## G_Barnesiella_AB
+## G_Sporobacter_AB
+## MDS1
+D = mydata %>% filter(exposure == "G_Sporobacter_AB" & P < 0.05) %>% 
+  arrange(P) 
+
+#f = paste0(results_dir, "G_unclassified_P_Firmicutes_AB.txt")
+#write.table(D, file = f, row.names = FALSE, col.names = TRUE, quote = TRUE, sep = "\t")
+
+D %>%
+  knitr::kable() %>%
+  kableExtra::kable_classic()
+
+```
+
+
+
+```{r}
+## Div_Shannon
+## G_Barnesiella_AB
+## G_Sporobacter_AB
+## MDS1
+D = mydata %>% filter(exposure == "G_Barnesiella_AB" & P < 0.05) %>% 
+  arrange(P) 
+
+#f = paste0(results_dir, "G_unclassified_P_Firmicutes_AB.txt")
+#write.table(D, file = f, row.names = FALSE, col.names = TRUE, quote = TRUE, sep = "\t")
+
+D %>%
+  knitr::kable() %>%
+  kableExtra::kable_classic()
+
+```
+
+
+
+
+```{r}
+R_PA = mydata %>% filter(exposure == "G_Ruminococcus_PA" )
+m = "1-palmitoyl-2-linoleoyl"
+palmitoyl = mydata %>% filter(exposure == "G_Ruminococcus_PA" & BIOCHEMICAL == "1-palmitoyl-2-linoleoyl")
+
+palmitoyl = mydata %>% filter(exposure == "G_Ruminococcus_PA" & grepl("1-palmitoyl-2-linoleoyl", BIOCHEMICAL) )
+```
+
+
+
+

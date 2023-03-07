@@ -1,0 +1,296 @@
+---
+title: "Association analysis"
+author: "David Hughes"
+date: "2/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+```{r}
+source("parameters/pfile.sh")
+source("functions/rntransform.R")
+source("functions/lmfit.R")
+source("functions/normW.R")
+```
+
+## Read in and format the data
+
+```{r}
+## covariables
+f = paste0(data_dir, "my_covariable_data.txt")
+cov_data = read.table(f, header = TRUE, sep = "\t", as.is = TRUE)
+## turn sex and is_vegetarian into a factor
+w = c(2,9); for(i in w){ cov_data[,i] = as.factor(cov_data[,i]) }
+## Make smoker never|ever|current into a numeric
+cov_data$smoker_NEC[ cov_data$smoker_NEC == "never"] = 0
+cov_data$smoker_NEC[ cov_data$smoker_NEC == "ever"] = 1
+cov_data$smoker_NEC[ cov_data$smoker_NEC == "current"] = 2
+cov_data$smoker_NEC = as.numeric(cov_data$smoker_NEC)
+## Make meat consumption numeric
+cov_data$meat_consumption[ cov_data$meat_consumption == "Not applicable"] = 0
+cov_data$meat_consumption[ cov_data$meat_consumption == "Between 5 and 10"] = 6
+cov_data$meat_consumption[ cov_data$meat_consumption == "More than 10"] = 7
+cov_data$meat_consumption = as.numeric(cov_data$meat_consumption)
+## Make meat frequency numeric
+cov_data$meat_frequency[ cov_data$meat_frequency == "I hardly ever or never eat/drink these products"] = 0
+cov_data$meat_frequency[ cov_data$meat_frequency == "Not this week"] = 1
+cov_data$meat_frequency[ cov_data$meat_frequency == "One time"] = 2
+cov_data$meat_frequency[ cov_data$meat_frequency == "A few times"] = 3
+cov_data$meat_frequency[ cov_data$meat_frequency == "Almost every day"] = 4
+cov_data$meat_frequency[ cov_data$meat_frequency == "Every day"] = 5
+cov_data$meat_frequency[ cov_data$meat_frequency == "Multiple times a day"] = 6
+cov_data$meat_frequency = as.numeric(cov_data$meat_frequency)
+
+
+
+## microbial traits data
+f = paste0(data_dir, "my_microbial_traits_data.txt")
+mt_data = read.table(f, header = TRUE, sep = "\t", as.is = TRUE)
+## MAKE PA MTs a factor
+w = grep("PA", colnames(mt_data) )
+for(i in w){
+  mt_data[,i] = as.factor(mt_data[,i])
+}
+## Set Enterotype as a factor
+mt_data$EnterotypeClass = as.factor(mt_data$EnterotypeClass)
+
+## A vector of microbial trait IDs
+micro_trait_ids = colnames(mt_data)[-c(1:10)]
+
+## MT phylogeny data
+f = paste0(data_dir, "microbiome_phylogeny.txt")
+phylogeny_data = read.table(f, header = TRUE, sep = "\t", as.is = TRUE)
+
+## metabolite data
+f = paste0(data_dir, "metabolite_data.txt")
+metabolite_data = read.table(f, header = TRUE, sep = "\t", as.is = TRUE)
+## filter those with less than 1000 observations
+not_na_count = apply(metabolite_data, 2, function(x){ sum(!is.na(x)) })
+w = which(not_na_count < 1000)
+metabolite_data = metabolite_data[,-w]
+
+## A vector of metabolite IDs
+metabo_ids = colnames(metabolite_data)
+
+## metabolite feature data
+f = paste0(data_dir, "metabolite_feature_data.txt")
+f = metabolite_feature_file
+feature_data = read.table(f, header = TRUE, 
+                          sep = "\t", 
+                          as.is = TRUE,
+                          quote="")
+
+```
+
+## Define mydata
+
+```{r}
+mydata = cbind(cov_data, mt_data, metabolite_data )
+
+## how many individuals are not 18 years old?
+w = which(mydata$age < 18)
+length( w )
+```
+
+```{r}
+library(iPVs)
+
+s = seq(0.4, 0.8, by = 0.1)
+
+mypvs = iPVs(metabolite_data, 
+	cor_method = "spearman", 			## you can choose spearman or pearson
+	dist_method = "R", 					## you can choose 'R' (1-abs(R)) or 'R2' (R*R)
+	hclust_meth = "complete", 			## you can choose 'complete', 'average' (UPGMA), or 'mcquitty' (WPGMA)
+	cutheight  = s        			## 1 or a series of cut heights
+	)
+
+
+```
+
+
+```{r}
+me = unlist( lapply(mypvs, function(x){ nrow(x$iPV_table) }) )
+me
+```
+
+```{r, fig.width = 4, fig.height=5}
+plot(s, me, pch = 21, bg = "blue", cex = 3, type = "b", ylim = c(0,600), xlab = "cut height", ylab = "PV count")
+```
+
+
+
+```{r}
+library(dendextend)
+
+####
+mydends = lapply(mypvs, function(x){
+	## extract the IDs for your PVs
+	pv_ids = as.character(x$iPV_table$PVs )
+
+	## define your tree as a dendrogram
+	dend = x$workingdata$tree %>% as.dendrogram
+
+	## create a vector of colors to color your tree labels
+	n = labels(dend)
+	pcol = rep("black", length(n))
+	w = which(n %in% pv_ids ); pcol[w] = "medium blue"
+
+	## redefine elements of dendrogram
+	dend = dend %>% 
+	set("labels_cex", 0.15) %>% 
+	set("labels_col", pcol) %>% 
+	set("branches_k_color",  value = pcol)
+
+	## return dendrogram
+	return(dend)
+})
+
+```
+
+
+
+```{r, fig.width = 25, fig.height = 6}
+pdf("metabolite_iPVs_0.4.pdf", width = 25, height = 6)
+mydends[[1]] %>% plot(main = paste0( "-- FGFP metabolites; Me = 542 --" ) )
+abline(h = 0.4, col = "red", lwd = 3)
+dev.off()
+```
+
+
+```{r, fig.width = 20, fig.height = 6}
+pdf("metabolite_iPVs_0.5.pdf", width = 25, height = 6)
+mydends[[2]] %>% plot(main = paste0( "-- FGFP metabolites; Me = 398 --" ) )
+abline(h = 0.5, col = "red", lwd = 3)
+dev.off()
+```
+
+```{r, fig.width = 20, fig.height = 6}
+pdf("metabolite_iPVs_0.6.pdf", width = 25, height = 6)
+mydends[[3]] %>% plot(main = paste0( "-- FGFP metabolites; Me = 268 --" ) )
+abline(h = 0.6, col = "red", lwd = 3)
+dev.off()
+```
+
+```{r, fig.width = 20, fig.height = 6}
+pdf("metabolite_iPVs_0.7.pdf", width = 25, height = 6)
+mydends[[4]] %>% plot(main = paste0( "-- FGFP metabolites; Me = 151 --" ) )
+abline(h = 0.7, col = "red", lwd = 3)
+dev.off()
+```
+
+```{r, fig.width = 20, fig.height = 6}
+pdf("metabolite_iPVs_0.8.pdf", width = 25, height = 6)
+mydends[[5]] %>% plot(main = paste0( "-- FGFP metabolites; Me = 59 --" ) )
+abline(h = 0.8, col = "red", lwd = 3)
+dev.off()
+```
+
+Define the study MTs
+
+```{r}
+study_mt_data = mt_data[, c("G_Ruminococcus_PA",
+                            "G_Coprococcus_PA",
+                            "G_Butyricicoccus_AB",
+                            "F_Sutterellaceae_PA",
+                            "G_Dialister_PA",
+                            "G_unclassified_F_Porphyromonadaceae_truncAB",
+                            "G_Parabacteroides_AB",
+                            "G_unclassified_F_Erysipelotrichaceae_PA",
+                            "C_Gammaproteobacteria_truncAB",
+                            "G_unclassified_P_Firmicutes_truncAB",
+                            "G_unclassified_P_Firmicutes_PA",
+                            "G_unclassified_O_Bacteroidales_PA",
+                            "G_Veillonella_PA",
+                            "G_Bifidobacterium_truncAB"
+                             ) ]
+
+###
+for(i in 1:ncol(study_mt_data)){
+  study_mt_data[,i] = as.numeric(as.character( study_mt_data[,i]) )
+}
+
+```
+
+
+
+```{r}
+
+my_MT_pvs = iPVs(study_mt_data, 
+	cor_method = "spearman", 			## you can choose spearman or pearson
+	dist_method = "R", 					## you can choose 'R' (1-abs(R)) or 'R2' (R*R)
+	hclust_meth = "complete", 			## you can choose 'complete', 'average' (UPGMA), or 'mcquitty' (WPGMA)
+	cutheight  = s        			## 1 or a series of cut heights
+	)
+
+```
+
+
+
+```{r}
+me = unlist( lapply(my_MT_pvs, function(x){ nrow(x$iPV_table) }) )
+me
+```
+
+
+```{r, fig.width = 4, fig.height=5}
+plot(s, me, pch = 21, bg = "blue", cex = 3, type = "b", ylim = c(0,15), xlab = "cut height", ylab = "PV count")
+```
+
+
+
+```{r}
+library(dendextend)
+
+####
+mydends = lapply(my_MT_pvs, function(x){
+	## extract the IDs for your PVs
+	pv_ids = as.character(x$iPV_table$PVs )
+
+	## define your tree as a dendrogram
+	dend = x$workingdata$tree %>% as.dendrogram
+
+	## create a vector of colors to color your tree labels
+	n = labels(dend)
+	pcol = rep("black", length(n))
+	w = which(n %in% pv_ids ); pcol[w] = "medium blue"
+
+	## redefine elements of dendrogram
+	dend = dend %>% 
+	set("labels_cex", 0.5) %>% 
+	set("labels_col", pcol) %>% 
+	set("branches_k_color",  value = pcol)
+
+	## return dendrogram
+	return(dend)
+})
+
+```
+
+
+
+```{r, fig.width = 4, fig.height = 4}
+pdf("MT_iPVs_0.4.pdf", width = 8, height = 5)
+mydends[[1]] %>% plot(main = paste0( "-- FGFP MTs; Me = 14 --" ) )
+abline(h = 0.4, col = "red", lwd = 3)
+dev.off()
+```
+
+```{r, fig.width = 4, fig.height = 4}
+pdf("MT_iPVs_0.7.pdf", width = 8, height = 5)
+mydends[[4]] %>% plot(main = paste0( "-- FGFP MTs; Me = 13 --" ) )
+abline(h = 0.7, col = "red", lwd = 3)
+dev.off()
+```
+
+
+```{r, fig.width = 4, fig.height = 4}
+pdf("MT_iPVs_0.8.pdf", width = 8, height = 5)
+mydends[[5]] %>% plot(main = paste0( "-- FGFP MTs; Me = 10 --" ) )
+abline(h = 0.8, col = "red", lwd = 3)
+dev.off()
+```
