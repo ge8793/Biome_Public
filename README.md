@@ -2,11 +2,6 @@
 
 ### - breast cancer study  for Kaitlin Wade, Tim Robinson, and Grace Edmunds 
 
-
-### - request from Kaitlin
-
-Hey moose! Would it be possible to run those regression analyses between the microbiota and metabolites for the breast cancer paper? Well only need three microbiota and I can pick those out if you want but if its easy to just do a loop of everything then we can pick out those results we need. I think we decided on the following variables:
-
 Outcomes: - All metabs
 
 Exposures: - All microbiota measures (same ones we used for GWAS
