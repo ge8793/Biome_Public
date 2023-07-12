@@ -1,12 +1,28 @@
 #########################################################################################################
-######## PROJECT: Running MR analysis between metabolites and Breast Cancer (from BCAC) with Shin et al. metabolite data
-######## Script: Grace Edmunds
-######## Date: 27/01/22
+######## PROJECT: Running MR analysis between metabolites and Breast Cancer (from BCAC) with Shin et al. metabolite data 
+######## Script: Grace Edmunds adapted from Kaitlin Wade, Performing MR analysis with metabolites as exposure and breast cancer as outcome
+######## Date: 12/05/23
 
+rm(list=ls())
 
-###### PART 1 - Pull metabolite SNPS out as exposure data
-
-### LOAD PACKAGES
+### INSTALL PACKAGES
+# install.packages("devtools")
+# # devtools::install_github("MRCIEU/TwoSampleMR") #to update the package
+# # devtools::install_github("MRCIEU/MRInstruments")
+# install.packages("plyr")
+# install.packages("dplyr")
+# install.packages("ggplot2")
+# install.packages("xlsx")
+# install.packages("png")
+# install.packages("ggrepel")
+# install.packages("ggthemes")
+# install.packages("calibrate")
+# install.packages("data.table")
+# install.packages("stringr")
+# install.packages("remotes")
+# remotes::install_github("MRCIEU/TwoSampleMR", force = TRUE)
+# devtools::install_github("mrcieu/ieugwasr", force = TRUE)
+# install.packages("googleAnalyticsR")
 library(stringr)
 library(remotes)
 library(data.table)
@@ -25,209 +41,230 @@ library(png)
 library(tidyr)
 library(forestplot)
 library(googleAnalyticsR)
-library(stringr)
-ga_auth(email="graceledmunds@gmail.com")
-library(MRInstruments)
-library(fuzzyjoin)
+ga_auth(email="myemailhere")
 
-#clearws
+# clearws
 rm(list=ls())
 
-#Read in the list of FGFP metabolites
+setwd("mywdhere")
 
-mets <- as.data.frame(fread("./data/FGFP_2020_05_21_QCd_feature_data_new_metabolite_list.txt"))
-mets$name <- mets$BIOCHEMICAL
+#########################################
+## PREPARING EXPOSURE DATA AS METABOLITE GWAS FILES ##
+#########################################
 
-# Extract exposure instruments from Shin et al. in IEU GWAS catalogue ====
-data(gwas_catalog)
-head(gwas_catalog)
+# We downloaded Supplementary table 5 from the Shin et al. GWAS paper then saved as "shin_summary_stats.csv" and read this in and format
 
-mets_gwas <-
-  subset(gwas_catalog,
-         grepl("metabolite", Phenotype))
+Shin <- as.data.frame(fread("./data/shin_summary_stats.csv", skip = 2, select = c(1:10)))
+head(Shin)
+names(Shin) <- c("Locus", "SNP", "Biochemical", "Ratio", "Effect/Other", "NA?", "n", "eaf", "beta/se", "Pval")
+head(Shin)
+Shin <- Shin[,c(1:5,7:10)]
+Shin <- Shin[c(3:326),]
 
-table(mets_gwas$Author)
+#Split the columns that are shared
+newcols <- str_split_fixed(Shin$`Effect/Other`, "/", 2)
+newcols1 <- as.data.frame(newcols)
+Shin$effect_allele <- newcols1[,1]
+Shin$other_allele <- newcols[,2]
 
-shin_gwas <-
-  subset(gwas_catalog,
-         grepl("Shin", Author))
+newcols <- str_split_fixed(Shin$`beta/se`, " ", 2)
+newcols1 <- as.data.frame(newcols)
+Shin$b <- newcols1[,1]
+Shin$se <- newcols[,2]
+#get rid of brackets by getting the number of characters in the se variable then limiting those you want
+nchar(Shin$se)
+Shin$se <- as.numeric(substr(Shin$se, start = nchar(Shin$se)-5, stop = nchar(Shin$se)-1))
+Shin$se <- str_replace(Shin$se, " ", "")
+Shin$n <- str_replace(Shin$n, ",", "")
+Shin$n <- as.numeric(Shin$n)
+Shin$b <- as.numeric(Shin$b)
+Shin$se <- as.numeric(Shin$se)
+Shin$Pval <- as.numeric(Shin$Pval)
+Shin$eaf <- as.numeric(Shin$eaf)
+Shin$SNP <- as.character(Shin$SNP)
+Shin$effect_allele <- as.character(Shin$effect_allele)
+Shin$other_allele <- as.character(Shin$other_allele)
 
-shin_gwas$name <- shin_gwas$Phenotype_info
+#write.table(Shin, "./data/Shin_Supp5_Formatted.txt", sep = '\t', row.names = F, col.names = T, quote = F)
 
-#fuzzyjoin to find the metabolites we need
-joined <- stringdist_inner_join(shin_gwas, mets, by = "name")
-names(joined)
-#run a quick check
-check <- as.data.frame(cbind(joined$name.x, joined$name.y))
-head(check)
+#If you have already done the above, you can read in the exposure data 
+exposure_dat <- read_exposure_data("./data/220512_Shin_Supp5_Formatted.txt", clump = FALSE, sep="\t", snp_col = "SNP", beta_col = "b", se_col = "se", pval_col = "Pval", eaf_col = "eaf", effect_allele_col = "effect_allele", other_allele_col = "other_allele", samplesize_col = "n", phenotype_col = "Biochemical")
 
-#create exposure data
-exposure_data <- filter(shin_gwas, Phenotype_info %in% check$V1)
+#or format the Shin data without saving and reading back in
+exposure_dat <- TwoSampleMR::format_data(dat = Shin[,-1], type = "exposure",
+                                                 phenotype_col = "Biochemical", snp_col = "SNP",
+                                                 beta_col = "b", se_col = "se", eaf_col = "eaf",
+                                                 effect_allele_col = "effect_allele", 
+                                                 other_allele_col = "other_allele", pval_col = "Pval", 
+                                                 samplesize_col = "n")
 
-#Make suplicate exposure data with COMP _IDs attached as will need this info later
-names(joined)
-comp_IDs <- joined[,c(8,12,29,32)]
-names(comp_IDs)
-exposure_data2 <-stringdist_inner_join(exposure_data, comp_IDs, by = "Phenotype_info")
-check2 <- as.data.frame(cbind(exposure_data2$Phenotype_info.x, exposure_data2$Phenotype_info.y))
-names(exposure_data2)
-exposure_data2 <-exposure_data2[,c(1:26, 29, 30)]
-names(exposure_data2)
-names(exposure_data2)[12] <- "SNP"
-exposure_data2 <-unique(exposure_data2)
-# write.table(exposure_data, "./data/draft002/COMP_IDs_FGFP_metabolites_from_shin.txt", quote = F, row.names = F, col.names = T, sep = '\t')
+exposure_dat <- exposure_dat[c(2:300),]
 
-names(exposure_data)
-exposure_data <- format_data(exposure_data, phenotype_col = "Phenotype_info")
-met_list <- as.data.frame(table(exposure_data$exposure))
-length(met_list$Var1)
+#########################################
+## PREPARING BCAC DATA FILES AS OUTCOME DATA ##
+#########################################
 
-#write.table(exposure_data, "./data/exp_dat_FGFP_metabolites_from_shin.txt", quote = F, row.names = F, col.names = T, sep = '\t')
-exposure_data <- as.data.frame(fread("./data/exp_dat_FGFP_metabolites_from_shin.txt"))
+#We downloaded the full BCAC outcome data from https://bcac.ccge.medschl.cam.ac.uk/bcacdata/icogs-complete-summary-results/
+#In this analysis we are looking at Overall BC so use the Overall dataset saved as 'icogs_onco_gwas_meta_overall_breast_cancer_summary_level_statistics.txt'
 
-###### PART 2 - PULL THE SNPS OUT OF BCAC AS OUTCOME DATA ############################################
+#The data is large so preview before you read in and then you know you only need columns "SNP.iCOGs", "Effect.Meta", "Baseline.Meta", "Beta.meta", "sdE.meta"
+BCAC_preview <- as.data.frame(fread("./data/icogs_onco_gwas_meta_overall_breast_cancer_summary_level_statistics.txt", nrows = 10))
+names(BCAC_preview)
 
-### Overall BC
+BCAC <- as.data.frame(fread("./data/icogs_onco_gwas_meta_overall_breast_cancer_summary_level_statistics.txt", 
+                            select = c("SNP.iCOGs", "Effect.Meta", "Baseline.Meta", "Beta.meta", "sdE.meta", "Freq.Gwas", "EAFcases.iCOGs", "EAFcontrols.iCOGs", "EAFcontrols.Onco", "EAFcases.Onco")))
 
-#read in metabolite exposure data
-metabolites <- as.data.frame(fread("./data/exp_dat_FGFP_metabolites_from_shin.txt"))
-head(metabolites)
-SNPs <- as.data.frame(table(metabolites$SNP)) #This tells us there are 72 individual SNPs in the data 
+#calculate the eaf to use 
+#weighted average of the contributing studies to the meta-analysis
+BCAC$eaf <- (((BCAC$Freq.Gwas * 32498) + (BCAC$EAFcases.iCOGs * 38349) + (BCAC$EAFcontrols.iCOGs * 37818) + (BCAC$EAFcases.Onco * 80125) + (BCAC$EAFcontrols.Onco * 58383)) / 247173)
 
-#read in BCAC Overall outcome data 
-check <- as.data.frame(fread("./data/overall_2020.csv"))
-check[1:10,]
 
-#filter on the exposure SNPs
-bcac_filter <- filter(check, check$rsid %in% metabolites$SNP) #69/72 SNPs were available in BCAC Overall BC
+#see what columns are called
+colnames(BCAC)
+BCAC[1:10,]
 
-#Make a list of the SNPs that are missing and manually look them up in LDlink, add any proxies into the data 
-proxy_list <- filter(metabolites, !metabolites$SNP %in% bcac_filter$rsid)
+#trim down
+BCACtrim <- BCAC[,c(1,2,3,4,5,11)]
+names(BCACtrim)
+colnames(BCACtrim) <- c("snp.icogs", "effect.allele.outcome", "ref.allele.outcome", "beta.outcome", "se.outcome", "eaf.outcome")
 
-#E.g. for rs1498694
-snp_proxy <- read.table("./data/Metabolite_Proxies/LDLINK_rs1498694.txt", header = TRUE, sep="\t")
-dim(snp_proxy)
-snp_best_proxy <- snp_proxy[snp_proxy$R2>=0.90,]
-dim(snp_best_proxy)
-snp_proxies <- as.vector(snp_best_proxy$RS_Number)
-test <- check[check$rsid %in% snp_proxies,] #1 proxies available rs1722383
-test$original <- "rs1498694"
-test$proxy <- "1"
-rs1498694_dat <- test
+#add sample size as described in 2020 paper methods supplementary table 4
+BCACtrim$ncase <- as.numeric("133384") 
+BCACtrim$ncontrol <- as.numeric("113789") 
+BCACtrim$samplesize.outcome <- as.numeric("247173") 
 
-#Add rs1498694 proxy to the outcome data
-bcac_filter$original <- bcac_filter$rsid
-bcac_filter$proxy <- "0"
-bcac_extended <- rbind.data.frame(bcac_filter, rs1498694_dat)
+head(BCACtrim)
 
-## save data
-# write.table(bcac_extended, "./analysis/Metabolites/outcome_data_overall_metabolites_with_proxies.txt", row.names = F, col.names = T, quote = F, sep = '\t')
+#split the snp column to get just the rsid out of it 
+BCACtrim[,10:13] <- str_split_fixed(BCACtrim$snp.icogs, ":", 4)
+#preview the first ten rows
+BCACtrim [1:10,]
+#rename the rsid column
+colnames(BCACtrim)[10] <- "rsid"
+#preview the first ten rows
+BCACtrim [1:10,]
+#delete the last 3 columns
+BCACtrim <- BCACtrim[,1:10]
+#preview the first ten rows
+BCACtrim [1:10,]
 
-#Remove all of this this now as it is big
-rm(list=ls())
+#NB there is no p-value column, infer from MR base, do not use the pvalues in the BCAC data, they are not really the GWAS pvalue
 
-###### PART 3 - RUN MR
+#output this new dataframe as a csv file
+write.csv(BCACtrim, "./data/BCAC_overall_2020_trimmed.csv", sep = '/t', row.names = FALSE, col.names = TRUE, quote = FALSE) 
 
-### Overall BC
+## Format overall breast cancer outcome data 
 
-## Read in metabolite exposure data and continue formatting
+names(BCACtrim)
 
-# metabolites <- as.data.frame(fread("./data/exp_dat_FGFP_metabolites_from_shin.txt"))
-# head(metabolites)
+outcome_data <- TwoSampleMR::format_data(BCACtrim, type = "outcome", snps = exposure_dat$SNP,
+                                    snp_col = "rsid", beta_col = "beta.outcome", se_col = "se.outcome", 
+                                    effect_allele_col = "effect.allele.outcome", other_allele_col = "ref.allele.outcome", 
+                                    ncase_col = "ncase", ncontrol_col = "ncontrol", eaf_col = "eaf.outcome")
 
-# exposure_dat <- metabolites
-# head(exposure_dat)
-# 
-# exposure_dat$exposurenew <- str_replace_all(exposure_dat$exposure, "\\(unit increase\\)", "")
-# exposure_dat$exposurenew <- str_replace_all(exposure_dat$exposurenew, "\\(unit decrease\\)", "")
-# exposure_dat$exposurenew <- str_replace(exposure_dat$exposurenew, "[)]", "")
-# exposure_dat$exposurenew <- str_replace(exposure_dat$exposurenew, "[)]", "")
-# exposure_dat$exposurenew <- str_replace(exposure_dat$exposurenew, "[(]", "")
-# exposure_dat$exposurenew <- str_replace(exposure_dat$exposurenew, "[(]", "")
-# exposure_dat$exposure <- exposure_dat$exposurenew
-# head(exposure_dat)
+outcome_data[1:10,]
 
-# write.table(exposure_dat, "./data/exp_dat_formatted_shin.txt", row.names = F, col.names = T, quote = F, sep = '\t')
+write.table(outcome_data, "./data/Outcome_overall_BCAC_metabolites.txt", row.names = F, col.names = T, quote = F, sep = '\t')
 
-exposure_dat <- read_exposure_data("./data/exp_dat_formatted_shin.txt", clump = T, sep="\t", snp_col = "SNP", beta_col = "beta.exposure", se_col = "se.exposure", pval_col = "pval.exposure", eaf_col = "eaf.exposure", effect_allele_col = "effect_allele.exposure", other_allele_col = "other_allele.exposure", phenotype_col = "exposure")
+#If you want to use exactly this outcome data you can download it from Github available at https://github.com/ge8793/Biome_Public/blob/main/outcome_overall_BCAC_metabolites.txt
+outcome_data <- as.data.frame(fread("./data/Outcome_overall_BCAC_metabolites.txt"))
 
-## Read in BCAC Overall outcome data and continue formatting
-cancer <- as.data.frame(fread("./analysis/Metabolites/outcome_data_overall_metabolites_with_proxies.txt"))
+## N.B. MR-Base infers p-values from other fields because p-values are not provided
 
-#make a copy of the data in case anything goes wrong
-#cancer2 <- cancer
-#preview it
-#head(cancer)
-#colnames(cancer)
-#select only the columns we want
-#cancer_restrict <- cancer [,c(18,9,10,11,12,13,17,19)]
-#head(cancer_restrict)
-#change column names 
-#colnames(cancer_restrict) <- c("rsid", "effect_allele.outcome", "ref_allele.outcome", "beta.outcome", "SE.outcome", "pval.outcome", "samplesize.outcome", "EAF")
-#dim(cancer_restrict)
-# write.table(cancer_restrict, "./analysis/Metabolites/Overall_outcome_data_fotmatted.txt", col.names = T, row.names = F, quote = F,  sep = '\t')
+###### Prep for MR
 
-outcome_dat <- read_outcome_data("./analysis/Metabolites/Overall_outcome_data_fotmatted.txt", sep="\t", snp_col = "rsid", beta_col = "beta.outcome", se_col = "SE.outcome", pval_col = "pval.outcome", eaf_col = "EAF", effect_allele_col = "effect_allele.outcome", other_allele_col = "ref_allele.outcome", phenotype_col = "Overall_Breast_Cancer")
-outcome_dat$samplesize_col <-   247173
-outcome_dat$ncase_col <- 133384 
-outcome_dat$ncontrol_col <- 113789
-outcome_dat$Phenotype <- "Overall_BC"
+#Optional check load Ryan outcome data and run with this instead
+#load("./data/overall_outcome.Robj")
+#outcome_data <- overall
 
-dat <- harmonise_data(exposure_dat, outcome_dat, action =2)
+#check unique SNPS in exposure data
+SNPS <- as.data.frame(unique(exposure_dat$SNP)) #218 SNPs
+exposures <- as.data.frame(unique(exposure_dat$exposure)) 
+#check unique SNPs in outcome data
+SNPS <- as.data.frame(unique(outcome_data$SNP)) #204 SNPs
 
-names(dat)
+#Make a list of the SNPs that are missing and manually look them up in LDlink
+proxy_list <- filter(exposure_dat, !exposure_dat$SNP %in% outcome_data$SNP) #19 snps
+missing <- unique(proxy_list$SNP) #14 exposures 
 
-#Get the MR Egger intercept for any with >2 SNPs 
-het <- mr_pleiotropy_test(dat)
+#harmonise
+dat <- harmonise_data(exposure_dat, outcome_data, action =2)
+check <- unique(dat$SNP) #204 SNPs
+check <- unique(dat$exposure) #209 exposures
+
+#some will be dropped again now because MR keep = false
 
 mr_results <- mr(dat, method_list=c("mr_wald_ratio","mr_ivw","mr_egger_regression","mr_weighted_median", "mr_weighted_mode"))
 mr_results$outcome <- "OverallBC"
 mr_results$OR <- exp(mr_results$b)
 mr_results$LCL <- exp((mr_results$b)-1.96*(mr_results$se))
 mr_results$UCL <- exp((mr_results$b)+1.96*(mr_results$se))
-#write.table(mr_results, "./analysis/Metabolites/overall_results.txt", col.names = T, row.names = F, quote = F, sep = '\t')
 
-#Get the Q stat for any with >2 SNPS
-Q_list <- list ()
+write.table(mr_results, "./analysis/Metabolites/Overall_Results/230705_MR_Results_Metabolites_OverallBC.txt", col.names = T, row.names = F, quote = F, sep = '\t')
+
+#mr_results <- as.data.frame(fread("./analysis/Metabolites/Overall_Results/MR_Results_Metabolites_OverallBC.txt"))
+Res <- mr_results %>% filter(mr_results$method %in% c("Wald ratio", "Inverse variance weighted"))
+count <- unique(Res$id.exposure)
+
+#get egger p value
+het <- mr_pleiotropy_test(dat)
+
+#Get the Q stats
 Q <- mr_heterogeneity(dat)
 Q_baso <- as.data.frame(Q)
 Q$outcome <- paste0("Overall Breast Cancer")
-#write.table(Q_baso, "./analysis/Metabolites/Metabolite_Q_statistics_Overall.txt", row.names = T, col.names = T, sep = '\t')
 
-#Get the R2 and F stat for each SNP
+write.table(Q_baso, "./analysis/Metabolites/Overall_Results/Metabolite_Q_statistics_Overall.txt", row.names = T, col.names = T, sep = '\t')
 
+#add F stats and R2 to harmonised data
+names(dat)
 eaf <- as.numeric(dat$eaf.exposure)     
 b <- as.numeric(dat$beta.exposure)
 se <- as.numeric(dat$se.exposure)
 p <- as.numeric(dat$pval.exposure)
 snp<- dat$SNP
-N <- 7824 #number of individuals in shin
+N <- dat$samplesize.exposure #number of individuals in shin
 samplesize <- dat$samplesize.exposure
-Ncontrols <- dat$ncontrol_col
-Ncases <- dat$ncase_col
-
+k<-1
 dat$VG <- 2*(b^2)*eaf*(1-eaf)
 dat$VG <- as.numeric(dat$VG)
 dat$PV <- 2*(b^2)*eaf*(1-eaf) + ((se^2)*2*N*eaf*(1-eaf))
 dat$R2 <- dat$VG/dat$PV
+dat$Fstat = dat$R2*(N-1-k)/((1-dat$R2)*k)
 
-##The F-stat will be different for single and multi-SNP instruments 
+write.table(dat, "./analysis/Metabolites/Overall_Results/Overall_harmonised_data.txt", col.names = T, row.names = F, quote = F, sep = '\t')
 
-#single
-single <- filter(mr_results, mr_results$method == "Wald ratio")
-dat_single <- filter(dat, dat$exposure %in% single$exposure) 
-k <- 1 #nsnp
-dat_single$Fstat = dat_single$R2*(N-1-k)/((1-dat_single$R2)*k)
+#add F stats and R2 to exposure data to make supplementary tables 
+names(exposure_dat)
+eaf <- as.numeric(exposure_dat$eaf.exposure)     
+b <- as.numeric(exposure_dat$beta.exposure)
+se <- as.numeric(exposure_dat$se.exposure)
+p <- as.numeric(exposure_dat$pval.exposure)
+snp<- exposure_dat$SNP
+N <- exposure_dat$samplesize.exposure #number of individuals in shin
+samplesize <- exposure_dat$samplesize.exposure
+k<-1
+exposure_dat$VG <- 2*(b^2)*eaf*(1-eaf)
+exposure_dat$VG <- as.numeric(exposure_dat$VG)
+exposure_dat$PV <- 2*(b^2)*eaf*(1-eaf) + ((se^2)*2*N*eaf*(1-eaf))
+exposure_dat$R2 <- exposure_dat$VG/exposure_dat$PV
+exposure_dat$Fstat = exposure_dat$R2*(N-1-k)/((1-exposure_dat$R2)*k)
+colnames(exposure_dat)
+exposure_supp <- exposure_dat[,c(1,2,3,4,5,6,7,8,9,16,17)]
+write.table(exposure_supp, "./manuscript/July_2023/Metab_Exposure_Dat_Supp_S3.txt", col.names = T, row.names = F, quote = F, sep = '\t')
 
-#multi
-multi <- filter(mr_results, !mr_results$method == "Wald ratio")
-names(multi)
-multi_trim <- multi[,c(4,6)]
-dat_multi <- filter(dat, dat$exposure %in% multi$exposure) 
-dat_multi <- merge(dat_multi, multi_trim, by= "exposure")
-k <- dat_multi$nsnp #nsnp
-dat_multi$Fstat = dat_multi$R2*(N-1-k)/((1-dat_multi$R2)*k)
 
-#write.table(dat_single, "./analysis/Metabolites/Overall_harmonised_data_singlesnps.txt", col.names = T, row.names = F, quote = F, sep = '\t')
-#write.table(dat_multi, "./analysis/Metabolites/Overall_harmonised_data_multisnps.txt", col.names = T, row.names = F, quote = F, sep = '\t')
+#Undertake LOO analysis
+loo <- mr_leaveoneout(dat, parameters = default_parameters(), method = mr_ivw)
+write.table(loo, "./analysis/Metabolites/Overall_Results/Overall_LOO.txt", col.names = T, row.names = F, quote = F, sep = '\t')
 
+#Make and export a list of LOO plots
+loo_plot <- mr_leaveoneout_plot(loo)
+class(loo_plot)
+library(RColorBrewer)
+
+pdf(file = "./analysis/Metabolites/Overall_Results/LOO_Overall.pdf")
+for (i in 1:length(loo_plot)) {
+  print(loo_plot[[i]]+scale_color_manual(values =rep(brewer.pal(5,"Set1"), times=4)))
+}
+dev.off()
