@@ -1,4 +1,3 @@
-#########################################################################################################
 ######## PROJECT: Running MR analysis between gut microbial trait abundances/presence and absence and Breast Cancer (from BCAC) with FGFP data
 ######## Script: Grace Edmunds, adapted from Kaitlin Wade Performing MR analysis with FGFP abundances as exposure 
 ######## Date: 19/10/20
@@ -6,7 +5,21 @@
 ## clearworkspace
 rm(list = ls())
 
-### LOAD PACKAGES 
+### INSTALL PACKAGES 
+# install.packages("devtools")
+# install.packages("remotes")
+# remotes::install_github("MRCIEU/TwoSampleMR")
+# devtools::install_github("MRCIEU/MRInstruments")
+#install.packages("plyr")
+#install.packages("dplyr")
+#install.packages("ggplot2")
+#install.packages("xlsx")
+#install.packages("png")
+#install.packages("ggrepel")
+#install.packages("ggthemes")
+#install.packages("calibrate")
+#install.packages("data.table")
+#install.packages("stringr")
 library(stringr)
 library(data.table)
 library(calibrate)
@@ -23,18 +36,36 @@ library(png)
 library(tidyr)
 library(forestplot)
 
+###Check the required tools are working as expected 
+
+##check the package is installed 
+# devtools::install_github("mrcieu/ieugwasr")
+
+##check you have an access token
+ieugwasr::check_access_token()
+
+#if not working, reset email in googleauth
+# gar_auth(email = "myemail")
+
+##get an access token if you do not have one
+# ieugwasr::get_access_token
+
+##Use this token to see some available outcome data, to confirm it is working 
+ao <- available_outcomes()
+
 ### Prepare environment
 
 ## get working directiory
 getwd()
 
 ## if incorrect - set working directory 
-#setwd(<mydirectory>)
+setwd("mywd")
+
 
 #########################################
-## PREPARING GUT MICROBIOME GWAS FILES ##
+## PREPARING GUT MICROBIOME GWAS FILES AS EXPOSURE DATA ##
 #########################################
-#NB: The microbiome traits specified are those that are presented in Table S1 of the paper
+#NB: The bugs specified are those that are presented in Supplementary table S1 of the paper
 
 #Assign names to run analyses with
 bugs <- c("C_Gammaproteobacteria_RNT","F_Sutterellaceae_HB","G_Bifidobacterium_RNT","G_Butyricicoccus_RNT","G_Dialister_HB","G_Parabacteroides_RNT",
@@ -62,48 +93,75 @@ colnames(all_SNPs) <- "SNP"
 
 
 ################################
-## READ In BCAC GWAS FILES ##
+## READ In BCAC GWAS FILES AS OUTCOME DATA ##
 ################################
 #NB: GWAS of breast cancer executed by zhang et al. 2020 using data from BCAC consortium 
 
-# I pulled the bug snps from the overall bcac data first using a separate script
-cancer <- as.data.frame(fread("./data/overall_bcac_bugsnps.txt"))
-#preview it
-head(cancer)
-colnames(cancer)
-#select only the columns we want
-cancer_restrict <- cancer [,c(18,9,10,11,12,13,17,19)]
-head(cancer)
-#change column names 
-# colnames(cancer) <- c("rsid", "effect_allele.outcome", "ref_allele.outcome", "beta.outcome", "SE.outcome", "pval.outcome", "samplesize.outcome", "EAF")
-dim(cancer_restrict)
+#We downloaded the full BCAC outcome data from https://bcac.ccge.medschl.cam.ac.uk/bcacdata/icogs-complete-summary-results/
+#In this analysis we are looking at Overall BC so use the Overall dataset saved as 'icogs_onco_gwas_meta_overall_breast_cancer_summary_level_statistics.txt'
 
-cancer_restrict$outcome <- "Overall Breast Cancer"
-# write.table(cancer_restrict, "./analysis/201007_outcome_data_overall.txt", row.names=FALSE, col.names = TRUE, quote=FALSE, sep="\t")
+#The data is large so preview before you read in and then you know you only need columns "SNP.iCOGs", "Effect.Meta", "Baseline.Meta", "Beta.meta", "sdE.meta"
+BCAC_preview <- as.data.frame(fread("./data/icogs_onco_gwas_meta_overall_breast_cancer_summary_level_statistics.txt", nrows = 10))
+names(BCAC_preview)
 
-##There is one missing snp, look for a proxy then pull the proxy out of bcac data by returning to the separate script
+BCAC <- as.data.frame(fread("./data/icogs_onco_gwas_meta_overall_breast_cancer_summary_level_statistics.txt", 
+                            select = c("SNP.iCOGs", "Effect.Meta", "Baseline.Meta", "Beta.meta", "sdE.meta", "Freq.Gwas", "EAFcases.iCOGs", "EAFcontrols.iCOGs", "EAFcontrols.Onco", "EAFcases.Onco")))
 
-# missing <- filter(all_exposures, !all_exposures$SNP %in% cancer_restrict$rsid)
-##The missing snp is for G_Coprococcus_HB
-##LDLink output
-# snp_proxy <- read.table("./data/LDlink_coprococcus.txt", header = TRUE, sep="\t")
-# dim(snp_proxy)
-# snp_best_proxy <- snp_proxy[snp_proxy$R2>=0.90,]
-# dim(snp_best_proxy)
-# snp_proxies <- as.data.frame(snp_best_proxy$RS_Number)
-# colnames(snp_proxies)[1] <- "SNP"
-# extended_snplist <- rbind(snp_proxies, all_SNPs)
-# extended_snplist <- unique(extended_snplist)
-# #remove whitespace 
-# extended_snplist2 <- extended_snplist
-# extended_snplist <- as.data.frame(gsub(" ", "", extended_snplist$SNP))
-# colnames(extended_snplist)[1] <- "SNP"
-# extended_snplist <- filter(extended_snplist, !extended_snplist$SNP == ".")
+#calculate the eaf to use 
+#weighted average of the contributing studies to the meta-analysis
+BCAC$eaf <- (((BCAC$Freq.Gwas * 32498) + (BCAC$EAFcases.iCOGs * 38349) + (BCAC$EAFcontrols.iCOGs * 37818) + (BCAC$EAFcases.Onco * 80125) + (BCAC$EAFcontrols.Onco * 58383)) / 247173)
 
-# write.table(extended_snplist, "./data/bugs_and_proxies_for_Overallbc.txt", sep = '\t')
+#see what columns are called
+colnames(BCAC)
+BCAC[1:10,]
 
-#now go back and pull this list out of the bcac data before continuing
-#this proxy is not in the BCAC overall data so we cannot get results for coporococcus
+#trim down
+BCACtrim <- BCAC[,c(1,2,3,4,5,11)]
+names(BCACtrim)
+colnames(BCACtrim) <- c("snp.icogs", "effect.allele.outcome", "ref.allele.outcome", "beta.outcome", "se.outcome", "eaf.outcome")
+
+#add sample size as described in 2020 paper methods supplementary table 4
+BCACtrim$ncase <- as.numeric("133384") 
+BCACtrim$ncontrol <- as.numeric("113789") 
+BCACtrim$samplesize.outcome <- as.numeric("247173") 
+
+head(BCACtrim)
+
+#split the snp column to get just the rsid out of it 
+BCACtrim[,10:13] <- str_split_fixed(BCACtrim$snp.icogs, ":", 4)
+#preview the first ten rows
+BCACtrim [1:10,]
+#rename the rsid column
+colnames(BCACtrim)[10] <- "rsid"
+#preview the first ten rows
+BCACtrim [1:10,]
+#delete the last 3 columns
+BCACtrim <- BCACtrim[,1:10]
+#preview the first ten rows
+BCACtrim [1:10,]
+
+#NB there is no p-value column, infer from MR base, do not use the pvalues in the BCAC data, they are not really the GWAS pvalue
+
+#output this new dataframe as a csv file
+write.csv(BCACtrim, "./data/BCAC_overall_2020_trimmed.csv", sep = '/t', row.names = FALSE, col.names = TRUE, quote = FALSE) 
+
+#Read back in once you have done the above steps before 
+BCACtrim<- as.data.frame(fread("./data/BCAC_overall_2020_trimmed.csv"))
+BCACtrim[1:10,]
+names(BCACtrim)
+
+outcome_data <- TwoSampleMR::format_data(BCACtrim, type = "outcome", snps = all_SNPs$SNP,
+                                         snp_col = "rsid", beta_col = "beta.outcome", se_col = "se.outcome", 
+                                         effect_allele_col = "effect.allele.outcome", other_allele_col = "ref.allele.outcome", 
+                                         ncase_col = "ncase", ncontrol_col = "ncontrol", eaf_col = "eaf.outcome")
+
+outcome_data[1:10,]
+
+write.table(outcome_data, "./data/outcome_Data_OverallBC_Biome.txt", col.names = T, row.names = F, sep = '\t', quote = F)
+
+##There is one missing snp, looked for a proxy in LD link then repeated the above for the proxy, this proxy is not in the BCAC overall data so we cannot get results for coporococcus
+
+#If you want to use the exact outcome data used in the current paper you can download it at https://github.com/ge8793/Biome_Public/blob/main/outcome_Overall_BCAC_Microbiome.txt
 
 rm(list=ls())
 
@@ -124,10 +182,10 @@ dat_list <- list()
 
 # Run the MR analyses
 for(i in bugs){
-  exposure <- paste("./data/Bugs/",i,".txt",sep="")
+  exposure <- paste("/Users/ge8793/OneDrive - University of Bristol/001_PROJECTS/Biome/data/Bugs/",i,".txt",sep="")
   exposure_dat <- read_exposure_data(exposure,sep="\t", snp_col = "rsid", beta_col = "beta", se_col = "se", pval_col = "P_value", eaf_col = "eaf", effect_allele_col = "allele_B", other_allele_col = "allele_A", samplesize_col = "n")
   exposure_dat$exposure <- i
-  outcome_dat <- read_outcome_data("./analysis/201007_outcome_data_overall.txt", sep="\t", snp_col = "rsid", beta_col = "beta.outcome", se_col = "se.outcome", pval_col = "pval.outcome", eaf_col = "EAF", effect_allele_col = "effect.allele.outcome", other_allele_col = "ref.allele.outcome", phenotype_col = "outcome")
+  outcome_dat <- read_outcome_data("./data/outcome_Overall_BCAC_Microbiome.txt", sep="\t", snp_col = "SNP", beta_col = "beta.outcome", se_col = "se.outcome", pval_col = "pval.outcome", eaf_col = "eaf.outcome", effect_allele_col = "effect_allele.outcome", other_allele_col = "other_allele.outcome", phenotype_col = "outcome")
   outcome_dat$samplesize_col <-   247173
   outcome_dat$ncase_col <- 133384 
   outcome_dat$ncontrol_col <- 113789
@@ -145,6 +203,7 @@ for(i in bugs){
   rm(a,name)
 
 }
+
 
 ##Add the prevalence to the binary phenotypes in the dat list from FGFP supplementary data
 
@@ -243,7 +302,7 @@ dat_list[[13]]$prevalence <- 0.27
 all_results <- do.call(rbind, results_list)
 rownames(all_results) <- NULL
 
-# write.table(all_results, "./analysis/220725_mr_results_BCoverall2020_biome.txt", row.names=F, col.names = T, quote = F, sep = "\t")
+write.table(all_results, "./analysis/mr_results_Biome_OverallBC.txt", row.names=F, col.names = T, quote = F, sep = "\t")
 
 ### Get the F-stats and R2 values for this analysis
 
@@ -258,8 +317,9 @@ res2$prevalence <- 1
 names(res2)
 res2$R <- TwoSampleMR::get_r_from_lor(res2$beta.exposure, res2$eaf.exposure, res2$Ncase.exp, res2$Ncontrol.exp, res2$prevalence, model = "logit", correction = F)
 res2$R2 <- res2$R^2
+#R2*(N-1-k)/((1-r2)*k)
 res2$F_stat<- (res2$R2*(res2$samplesize.exposure-1-1))/((1-res2$R2)*1)
-# write.table(res2, "./analysis/R2values_binary_overall.txt", row.names = F, col.names = T, quote = F, sep = '\t')
+write.table(res2, "./analysis/R2values_binary_overall.txt", row.names = F, col.names = T, quote = F, sep = '\t')
 
 ##Calculate R2 for continuous traits 
 ### For this, we use the equation R2 = 2*(b^2)*eaf*(1-eaf)/(2*(b^2)*eaf*(1-eaf)+(se^2)*(2*N)*eaf*(1-eaf)
@@ -297,4 +357,9 @@ rm(name)
 }
 
 F_statistics <- rbindlist(F_list)
-#write.table(F_statistics, "./analysis/F_R2_Power_MT_OverallBC.txt", col.names = T, row.names = F, quote = FALSE, sep = '\t')
+write.table(F_statistics, "./analysis/F_R2_Power_Continuoustraits_OverallBC.txt", col.names = T, row.names = F, quote = FALSE, sep = '\t')
+
+##Equation used for R2 continuous traits 
+
+#R2 = 2*(b^2)*eaf*(1-eaf)/(2*(b^2)*eaf*(1-eaf)+(se^2)*(2*N)*eaf*(1-eaf), where b = beta of the SNP-exposure association, eaf = effect allele frequency of the SNP, se = standard error of the SNP-exposure association and N = sample size of the SNP-exposure GWAS 
+#F = R2*(N-1-k)/((1-r2)*k), where k is the number of SNPs
